@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import Enum
 
-from .money import Money
+from .protocol import MoneyLike
 
 __all__ = ["Posting", "Side"]
 
@@ -24,13 +24,13 @@ class Posting:
     """A single debit or credit against one account."""
 
     account_id: str
-    amount: Money
+    amount: MoneyLike
     side: Side
 
     def __post_init__(self) -> None:
         if not self.account_id:
             raise ValueError("account_id must not be empty")
-        if not self.amount.is_positive:
+        if self.amount.amount <= 0:
             raise ValueError(f"posting amount must be positive, got {self.amount}")
 
     @property
@@ -38,7 +38,7 @@ class Posting:
         return self.amount.currency
 
     @property
-    def signed_amount(self) -> Money:
+    def signed_amount(self) -> MoneyLike:
         return self.amount if self.side is Side.DEBIT else -self.amount
 
     def reversed(self) -> Posting:

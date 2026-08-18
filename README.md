@@ -14,6 +14,21 @@ projection are not implemented yet.
 pip install ledger-core
 ```
 
+## Money
+
+The ledger does not own a money type. It posts any value that exposes an exact
+`amount`, the `currency` it is denominated in, and `+`, `-`, unary `-` and
+ordering — the `MoneyLike` protocol. The recommended pairing is
+[cryptomoney](https://github.com/polycratia/cryptomoney):
+
+```bash
+pip install "ledger-core[crypto]"
+```
+
+Until that package is released, `ledger_core.Money` is a small stand-in so the
+ledger stays usable and testable on its own. Swapping it out is an import
+change; nothing else in the API moves.
+
 ## Usage
 
 ```python
@@ -51,4 +66,4 @@ pip install -e .
 
 ## License
 
-MIT
+MIT — a [polycratia](https://polycratia.com) project.

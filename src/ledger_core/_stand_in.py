@@ -1,23 +1,21 @@
-"""Monetary amounts that carry their own currency."""
+"""A stand-in money type, kept only so the ledger runs and is testable alone.
+
+Anything satisfying :class:`~ledger_core.protocol.MoneyLike` can be posted
+instead; ``pip install "ledger-core[crypto]"`` pulls the dedicated one.
+"""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from decimal import Decimal
+from functools import total_ordering
 
-__all__ = ["CurrencyMismatch", "Money", "validate_currency"]
+from .protocol import CurrencyMismatch, validate_currency
 
-
-class CurrencyMismatch(ValueError):
-    """Raised when amounts in different currencies are combined."""
-
-
-def validate_currency(code: str) -> str:
-    if not isinstance(code, str) or len(code) != 3 or not code.isalpha() or not code.isupper():
-        raise ValueError(f"currency must be a 3-letter uppercase ISO 4217 code, got {code!r}")
-    return code
+__all__ = ["Money"]
 
 
+@total_ordering
 @dataclass(frozen=True, slots=True)
 class Money:
     """An exact amount in a single currency."""
@@ -57,6 +55,10 @@ class Money:
 
     def __neg__(self) -> Money:
         return Money(-self.amount, self.currency)
+
+    def __lt__(self, other: Money) -> bool:
+        self._require_same_currency(other)
+        return self.amount < other.amount
 
     def __str__(self) -> str:
         return f"{self.amount} {self.currency}"

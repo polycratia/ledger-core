@@ -5,8 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import Enum
 
-from .money import Money, validate_currency
 from .postings import Posting, Side
+from .protocol import MoneyLike, validate_currency
 
 __all__ = ["Account", "AccountType"]
 
@@ -43,13 +43,13 @@ class Account:
     def normal_side(self) -> Side:
         return self.type.normal_side
 
-    def debit(self, amount: Money) -> Posting:
+    def debit(self, amount: MoneyLike) -> Posting:
         return self._posting(amount, Side.DEBIT)
 
-    def credit(self, amount: Money) -> Posting:
+    def credit(self, amount: MoneyLike) -> Posting:
         return self._posting(amount, Side.CREDIT)
 
-    def _posting(self, amount: Money, side: Side) -> Posting:
+    def _posting(self, amount: MoneyLike, side: Side) -> Posting:
         if amount.currency != self.currency:
             raise ValueError(
                 f"account {self.account_id} holds {self.currency}, got {amount.currency}"

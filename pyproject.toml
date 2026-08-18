@@ -24,6 +24,11 @@ classifiers = [
 ]
 dependencies = []
 
+[project.optional-dependencies]
+# cryptomoney is not published yet; until it is, install it from source:
+# pip install "cryptomoney @ git+https://github.com/polycratia/cryptomoney"
+crypto = ["cryptomoney>=0.1"]
+
 [project.urls]
 Homepage = "https://github.com/polycratia/ledger-core"
 Source = "https://github.com/polycratia/ledger-core"
