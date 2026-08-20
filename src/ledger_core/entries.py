@@ -5,15 +5,49 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime
 from decimal import Decimal
-from typing import Iterable, Mapping
+from typing import Mapping
 
+from .accounts import Account
 from .postings import Posting, Side
+from .protocol import MoneyLike
 
-__all__ = ["Entry", "UnbalancedEntry"]
+__all__ = ["Entry", "EntryPosting", "UnbalancedEntry"]
 
 
 class UnbalancedEntry(ValueError):
     """Raised when debits and credits of an entry do not cancel out."""
+
+
+@dataclass(frozen=True, slots=True)
+class EntryPosting:
+    """A posting together with the transaction it was written under."""
+
+    entry_id: str
+    occurred_at: datetime
+    posting: Posting
+
+    @property
+    def account_id(self) -> str:
+        return self.posting.account_id
+
+    @property
+    def amount(self) -> MoneyLike:
+        return self.posting.amount
+
+    @property
+    def side(self) -> Side:
+        return self.posting.side
+
+    @property
+    def currency(self) -> str:
+        return self.posting.currency
+
+    @property
+    def signed_amount(self) -> MoneyLike:
+        return self.posting.signed_amount
+
+    def __str__(self) -> str:
+        return f"{self.entry_id}: {self.posting}"
 
 
 @dataclass(frozen=True, slots=True)
@@ -48,6 +82,29 @@ class Entry:
                 f"entry {self.entry_id} does not balance in: {', '.join(drifting)}"
             )
 
+    @classmethod
+    def transfer(
+        cls,
+        *,
+        entry_id: str,
+        occurred_at: datetime,
+        debit: Account,
+        credit: Account,
+        amount: MoneyLike,
+        memo: str = "",
+        corrects: str | None = None,
+        metadata: Mapping[str, str] | None = None,
+    ) -> Entry:
+        """One movement, both of its sides, under a single entry id."""
+        return cls(
+            entry_id=entry_id,
+            occurred_at=occurred_at,
+            postings=(debit.debit(amount), credit.credit(amount)),
+            memo=memo,
+            corrects=corrects,
+            metadata=metadata or {},
+        )
+
     @property
     def currencies(self) -> frozenset[str]:
         return frozenset(posting.currency for posting in self.postings)
@@ -61,6 +118,12 @@ class Entry:
     def postings_for(self, account_id: str) -> tuple[Posting, ...]:
         return tuple(p for p in self.postings if p.account_id == account_id)
 
+    def stamped(self) -> tuple[EntryPosting, ...]:
+        """The postings of this entry, each carrying the transaction it shares."""
+        return tuple(
+            EntryPosting(self.entry_id, self.occurred_at, posting) for posting in self.postings
+        )
+
     def reversal(self, *, entry_id: str, occurred_at: datetime, memo: str = "") -> Entry:
         """Build the correcting entry that cancels this one."""
         return Entry(
@@ -70,7 +133,3 @@ class Entry:
             memo=memo or f"reversal of {self.entry_id}",
             corrects=self.entry_id,
         )
-
-
-def _unused(postings: Iterable[Posting]) -> None:
-    raise NotImplementedError

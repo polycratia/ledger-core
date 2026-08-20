@@ -5,8 +5,8 @@ two-phase reserve, and balances that cannot drift.
 
 ## Status
 
-Pre-alpha. Accounts, postings and entries are in place; holds and balance
-projection are not implemented yet.
+Pre-alpha. Accounts, postings, entries and the journal are in place; holds and
+balance projection are not implemented yet.
 
 ## Installation
 
@@ -31,23 +31,45 @@ change; nothing else in the API moves.
 
 ## Usage
 
+A movement has two sides and one id. `Entry.transfer` writes both:
+
 ```python
 from datetime import datetime, timezone
 from decimal import Decimal
 
-from ledger_core import Account, AccountType, Entry, Money
+from ledger_core import Account, AccountType, Entry, Journal, Money
 
 cash = Account("cash", AccountType.ASSET, "EUR")
 customer = Account("customer:42", AccountType.LIABILITY, "EUR")
-amount = Money(Decimal("25.00"), "EUR")
 
-deposit = Entry(
+deposit = Entry.transfer(
     entry_id="e-1",
     occurred_at=datetime.now(timezone.utc),
-    postings=(cash.debit(amount), customer.credit(amount)),
+    debit=cash,
+    credit=customer,
+    amount=Money(Decimal("25.00"), "EUR"),
     memo="card deposit",
 )
 ```
+
+An entry that does not net to zero in every currency it touches raises
+`UnbalancedEntry` at construction, so a one-sided movement never exists as an
+object. Entries with more than two postings are fine as long as they sum to
+zero.
+
+The journal keeps them, and keeps them whole:
+
+```python
+journal = Journal()
+journal.append(deposit)
+
+for posting in journal.postings("cash"):
+    print(posting.entry_id, posting.side.value, posting.amount)
+```
+
+`Journal.extend` writes a batch under the same rule: if any entry in it is
+rejected — a duplicate id, a correction of something nobody wrote — none of
+the batch is kept.
 
 Entries are never edited or deleted. To undo one, write the correcting entry:
 
@@ -56,6 +78,7 @@ refund = deposit.reversal(
     entry_id="e-2",
     occurred_at=datetime.now(timezone.utc),
 )
+journal.append(refund)
 ```
 
 ## Development
