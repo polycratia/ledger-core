@@ -5,8 +5,8 @@ two-phase reserve, and balances that cannot drift.
 
 ## Status
 
-Pre-alpha. Accounts, postings, entries and the journal are in place; holds and
-balance projection are not implemented yet.
+Pre-alpha. Accounts, postings, entries, the journal and holds are in place; a
+standalone balance projection is not implemented yet.
 
 ## Installation
 
@@ -80,6 +80,59 @@ refund = deposit.reversal(
 )
 journal.append(refund)
 ```
+
+## Holds
+
+A withdrawal is not one moment but two: the funds stop being spendable now,
+and they leave later — or not at all. A hold covers the gap. It writes
+nothing; it only stands in front of the balance.
+
+```python
+from ledger_core import Holds
+
+holds = Holds(journal)
+
+holds.place(
+    hold_id="h-1",
+    account=customer,
+    amount=Money(Decimal("10.00"), "EUR"),
+    placed_at=datetime.now(timezone.utc),
+    memo="withdrawal to IBAN",
+)
+
+holds.balance(customer)    # what the account holds
+holds.held(customer)       # what open holds have reserved
+holds.available(customer)  # balance minus holds
+```
+
+A hold that does not fit in the available balance raises `InsufficientFunds`:
+the reservation is refused rather than the account going short. Amounts come
+back as `Decimal` in the account's currency — the ledger owns no money type,
+so it cannot mint the zero an empty balance would need.
+
+If the withdrawal falls through, the reservation goes back:
+
+```python
+holds.release("h-1", at=datetime.now(timezone.utc))
+```
+
+If it goes through, the hold is settled by the entry that moves the money:
+
+```python
+payout = Entry.transfer(
+    entry_id="e-3",
+    occurred_at=datetime.now(timezone.utc),
+    debit=customer,
+    credit=cash,
+    amount=Money(Decimal("10.00"), "EUR"),
+    memo="withdrawal settled",
+)
+holds.capture("h-1", payout)
+```
+
+The entry has to take exactly what was held, or `CaptureMismatch` is raised
+and nothing is written. A settled hold never reopens: releasing or capturing
+it twice raises `HoldNotOpen`.
 
 ## Development
 
