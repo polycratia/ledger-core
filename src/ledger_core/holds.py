@@ -15,9 +15,9 @@ from enum import Enum
 from typing import Iterator, Mapping
 
 from .accounts import Account
+from .balances import Balances, effect_on
 from .entries import Entry
 from .journal import Journal
-from .postings import Side
 from .protocol import CurrencyMismatch, MoneyLike
 
 __all__ = [
@@ -127,19 +127,6 @@ class Hold:
         return f"{self.hold_id}: {self.amount} on {self.account_id} ({self.state.value})"
 
 
-def _effect_on(entry: Entry, account: Account) -> Decimal:
-    """What an entry does to an account, counted in its normal direction."""
-    total = Decimal(0)
-    for posting in entry.postings_for(account.account_id):
-        if posting.currency != account.currency:
-            raise CurrencyMismatch(
-                f"account {account.account_id} holds {account.currency}, "
-                f"entry {entry.entry_id} posts {posting.currency}"
-            )
-        total += posting.signed_amount.amount
-    return total if account.normal_side is Side.DEBIT else -total
-
-
 class Holds:
     """The reservations standing against a journal.
 
@@ -148,22 +135,26 @@ class Holds:
     empty balance would need.
     """
 
-    __slots__ = ("_journal", "_holds")
+    __slots__ = ("_journal", "_balances", "_holds")
 
-    def __init__(self, journal: Journal) -> None:
+    def __init__(self, journal: Journal, *, balances: Balances | None = None) -> None:
+        if balances is not None and balances.journal is not journal:
+            raise ValueError("balances must project the journal the holds stand against")
         self._journal = journal
+        self._balances = balances if balances is not None else Balances(journal)
         self._holds: dict[str, Hold] = {}
 
     @property
     def journal(self) -> Journal:
         return self._journal
 
+    @property
+    def balances(self) -> Balances:
+        return self._balances
+
     def balance(self, account: Account) -> Decimal:
         """What the account holds, counted in its normal direction."""
-        total = Decimal(0)
-        for entry in self._journal:
-            total += _effect_on(entry, account)
-        return total
+        return self._balances.balance(account)
 
     def held(self, account: Account) -> Decimal:
         """What open holds have reserved and nothing else may spend."""
@@ -229,7 +220,7 @@ class Holds:
         hold = self.hold(hold_id)
         if not hold.is_open:
             raise HoldNotOpen(f"hold {hold_id} is already {hold.state.value}")
-        taken = -_effect_on(entry, hold.account)
+        taken = -effect_on(entry, hold.account)
         if taken != hold.amount.amount:
             raise CaptureMismatch(
                 f"hold {hold_id} reserved {hold.amount}, "

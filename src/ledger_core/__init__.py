@@ -2,6 +2,7 @@
 
 from ._stand_in import Money
 from .accounts import Account, AccountType
+from .balances import Balances, Snapshot, SnapshotMismatch
 from .entries import Entry, EntryPosting, UnbalancedEntry
 from .holds import (
     CaptureMismatch,
@@ -22,6 +23,7 @@ __version__ = "0.1.0"
 __all__ = [
     "Account",
     "AccountType",
+    "Balances",
     "CaptureMismatch",
     "CurrencyMismatch",
     "DuplicateEntry",
@@ -38,6 +40,8 @@ __all__ = [
     "MoneyLike",
     "Posting",
     "Side",
+    "Snapshot",
+    "SnapshotMismatch",
     "UnbalancedEntry",
     "UnknownEntry",
     "UnknownHold",

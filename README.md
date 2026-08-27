@@ -5,8 +5,8 @@ two-phase reserve, and balances that cannot drift.
 
 ## Status
 
-Pre-alpha. Accounts, postings, entries, the journal and holds are in place; a
-standalone balance projection is not implemented yet.
+Pre-alpha. Accounts, postings, entries, the journal, balances and holds are in
+place.
 
 ## Installation
 
@@ -81,6 +81,51 @@ refund = deposit.reversal(
 journal.append(refund)
 ```
 
+## Balances
+
+A balance is not a stored number the ledger edits. It is what the entries add
+up to, counted in the account's normal direction:
+
+```python
+from ledger_core import Balances
+
+balances = Balances(journal)
+balances.balance(cash)  # Decimal("25.00")
+```
+
+Reading a balance writes nothing, so two readers cannot overwrite each other's
+arithmetic — the way a mutable column updated by read-modify-write loses a
+movement.
+
+Folding the whole journal on every read gets slower as the journal grows, so
+each fold is kept as a snapshot: how far it got, and what it had by then. The
+next read resumes from there and replays only what was written since.
+
+```python
+snapshot = balances.snapshot(customer)
+snapshot.total    # what the account held
+snapshot.through  # how many entries are folded into it
+snapshot.as_of    # when the last of them occurred
+```
+
+Snapshots are plain values, so they can be stored and handed back later:
+
+```python
+balances = Balances(journal, [snapshot])
+```
+
+A snapshot is only ever replaced by one that reaches further, never edited,
+and one claiming more entries than the journal holds is refused with
+`SnapshotMismatch`. A stale snapshot therefore costs a replay, never a wrong
+answer.
+
+A balance as of a moment ignores snapshots — a position in the journal says
+nothing about a point in time — and replays in full:
+
+```python
+balances.at(customer, datetime.now(timezone.utc))
+```
+
 ## Holds
 
 A withdrawal is not one moment but two: the funds stop being spendable now,
@@ -104,6 +149,9 @@ holds.balance(customer)    # what the account holds
 holds.held(customer)       # what open holds have reserved
 holds.available(customer)  # balance minus holds
 ```
+
+Holds read through the same projection: pass `Holds(journal, balances=balances)`
+to share snapshots with an existing one, or let it build its own.
 
 A hold that does not fit in the available balance raises `InsufficientFunds`:
 the reservation is refused rather than the account going short. Amounts come

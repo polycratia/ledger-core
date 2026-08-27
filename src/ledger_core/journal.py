@@ -64,6 +64,17 @@ class Journal:
     def entries(self) -> tuple[Entry, ...]:
         return tuple(self._entries)
 
+    def since(self, index: int) -> tuple[Entry, ...]:
+        """The entries written from a position onward.
+
+        Nothing before the head is ever rewritten, so a position taken earlier
+        keeps meaning what it meant: everything up to it has been accounted
+        for, everything from it has not.
+        """
+        if index < 0:
+            raise ValueError("index must not be negative")
+        return tuple(self._entries[index:])
+
     def postings(self, account_id: str | None = None) -> tuple[EntryPosting, ...]:
         """Every posting written so far, each stamped with its transaction."""
         return tuple(
