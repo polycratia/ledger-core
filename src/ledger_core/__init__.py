@@ -15,6 +15,7 @@ from .holds import (
     UnknownHold,
 )
 from .journal import DuplicateEntry, Journal, UnknownEntry
+from .operations import Operation, OperationMismatch, Operations, UnknownOperation
 from .postings import Posting, Side
 from .protocol import CurrencyMismatch, MoneyLike
 
@@ -38,6 +39,9 @@ __all__ = [
     "Journal",
     "Money",
     "MoneyLike",
+    "Operation",
+    "OperationMismatch",
+    "Operations",
     "Posting",
     "Side",
     "Snapshot",
@@ -45,5 +49,6 @@ __all__ = [
     "UnbalancedEntry",
     "UnknownEntry",
     "UnknownHold",
+    "UnknownOperation",
     "__version__",
 ]

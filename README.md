@@ -5,8 +5,8 @@ two-phase reserve, and balances that cannot drift.
 
 ## Status
 
-Pre-alpha. Accounts, postings, entries, the journal, balances and holds are in
-place.
+Pre-alpha. Accounts, postings, entries, the journal, balances, holds and
+idempotent operations are in place.
 
 ## Installation
 
@@ -181,6 +181,52 @@ holds.capture("h-1", payout)
 The entry has to take exactly what was held, or `CaptureMismatch` is raised
 and nothing is written. A settled hold never reopens: releasing or capturing
 it twice raises `HoldNotOpen`.
+
+## Idempotency
+
+Deposit callbacks arrive more than once. Retrying the entry is no answer: the
+journal refuses a duplicate id, and a refusal does not tell the caller whether
+the money landed. What repeats safely is the key the write was asked for
+under:
+
+```python
+from ledger_core import Operations
+
+operations = Operations(journal)
+
+topup = Entry.transfer(
+    entry_id="e-4",
+    occurred_at=datetime.now(timezone.utc),
+    debit=cash,
+    credit=customer,
+    amount=Money(Decimal("40.00"), "EUR"),
+    memo="deposit callback",
+)
+
+operations.post("callback:9f3", topup)  # writes the entry
+operations.post("callback:9f3", topup)  # returns it, writes nothing
+```
+
+`Operations.post_many` puts a whole batch under one key, under the journal's
+rule: all of it or none of it.
+
+A key is bound to the work it was first applied to. Coming back with the same
+key and different entries raises `OperationMismatch`, rather than posting them
+or answering with the wrong ones.
+
+Records are plain values, so a key settled in one process stays settled in the
+next:
+
+```python
+record = operations.operation("callback:9f3")
+record.entry_ids
+record.as_of
+
+operations = Operations(journal, [record])
+```
+
+A record naming entries the journal does not hold is refused with
+`OperationMismatch`, so a key can never be settled by a write nobody made.
 
 ## Development
 
