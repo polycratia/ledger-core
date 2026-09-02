@@ -3,7 +3,7 @@
 from ._stand_in import Money
 from .accounts import Account, AccountType
 from .balances import Balances, Snapshot, SnapshotMismatch
-from .entries import Entry, EntryPosting, UnbalancedEntry
+from .entries import Entry, EntryPosting
 from .holds import (
     CaptureMismatch,
     DuplicateHold,
@@ -11,8 +11,13 @@ from .holds import (
     HoldNotOpen,
     Holds,
     HoldState,
-    InsufficientFunds,
     UnknownHold,
+)
+from .invariants import (
+    ClosedAccount,
+    InsufficientFunds,
+    InvariantViolated,
+    UnbalancedEntry,
 )
 from .journal import DuplicateEntry, Journal, UnknownEntry
 from .operations import Operation, OperationMismatch, Operations, UnknownOperation
@@ -26,6 +31,7 @@ __all__ = [
     "AccountType",
     "Balances",
     "CaptureMismatch",
+    "ClosedAccount",
     "CurrencyMismatch",
     "DuplicateEntry",
     "DuplicateHold",
@@ -36,6 +42,7 @@ __all__ = [
     "HoldState",
     "Holds",
     "InsufficientFunds",
+    "InvariantViolated",
     "Journal",
     "Money",
     "MoneyLike",

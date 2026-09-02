@@ -8,14 +8,11 @@ from decimal import Decimal
 from typing import Mapping
 
 from .accounts import Account
+from .invariants import UnbalancedEntry
 from .postings import Posting, Side
 from .protocol import MoneyLike
 
 __all__ = ["Entry", "EntryPosting", "UnbalancedEntry"]
-
-
-class UnbalancedEntry(ValueError):
-    """Raised when debits and credits of an entry do not cancel out."""
 
 
 @dataclass(frozen=True, slots=True)

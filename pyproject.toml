@@ -28,6 +28,7 @@ dependencies = []
 # cryptomoney is not published yet; until it is, install it from source:
 # pip install "cryptomoney @ git+https://github.com/polycratia/cryptomoney"
 crypto = ["cryptomoney>=0.1"]
+dev = ["pytest>=7"]
 
 [project.urls]
 Homepage = "https://github.com/polycratia/ledger-core"
@@ -38,4 +39,8 @@ Issues = "https://github.com/polycratia/ledger-core/issues"
 packages = ["src/ledger_core"]
 
 [tool.hatch.build.targets.sdist]
-include = ["src", "README.md", "LICENSE"]
+include = ["src", "tests", "README.md", "LICENSE"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]

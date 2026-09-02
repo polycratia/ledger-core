@@ -17,6 +17,7 @@ from typing import Iterator, Mapping
 from .accounts import Account
 from .balances import Balances, effect_on
 from .entries import Entry
+from .invariants import ClosedAccount, InsufficientFunds
 from .journal import Journal
 from .protocol import CurrencyMismatch, MoneyLike
 
@@ -42,10 +43,6 @@ class UnknownHold(KeyError):
 
 class HoldNotOpen(ValueError):
     """Raised when a hold that is already settled is released or captured."""
-
-
-class InsufficientFunds(ValueError):
-    """Raised when a hold would reserve more than the account has available."""
 
 
 class CaptureMismatch(ValueError):
@@ -79,6 +76,11 @@ class Hold:
     def __post_init__(self) -> None:
         if not self.hold_id:
             raise ValueError("hold_id must not be empty")
+        if not self.account.is_open:
+            raise ClosedAccount(
+                f"hold {self.hold_id} reserves on {self.account.account_id}, "
+                f"closed at {self.account.closed_at}"
+            )
         if self.amount.amount <= 0:
             raise ValueError(f"a hold must reserve a positive amount, got {self.amount}")
         if self.amount.currency != self.account.currency:
@@ -203,6 +205,22 @@ class Holds:
             )
         self._holds[hold_id] = hold
         return hold
+
+    def spend(self, entry: Entry, *, account: Account) -> Entry:
+        """Write a movement out of an account, refused if the funds are not free.
+
+        An entry answers to its own rules only, and balancing says nothing about
+        whether what it takes is still there once open holds are counted. This
+        asks that question first and appends only if the answer holds.
+        """
+        taken = -effect_on(entry, account)
+        available = self.available(account)
+        if taken > available:
+            raise InsufficientFunds(
+                f"entry {entry.entry_id} takes {taken} {account.currency} from "
+                f"{account.account_id}, {available} {account.currency} is available"
+            )
+        return self._journal.append(entry)
 
     def release(self, hold_id: str, *, at: datetime) -> Hold:
         """Give the reservation back; nothing is written."""

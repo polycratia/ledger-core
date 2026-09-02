@@ -5,8 +5,8 @@ two-phase reserve, and balances that cannot drift.
 
 ## Status
 
-Pre-alpha. Accounts, postings, entries, the journal, balances, holds and
-idempotent operations are in place.
+Pre-alpha. Accounts, postings, entries, the journal, balances, holds,
+idempotent operations and the invariants behind them are in place.
 
 ## Installation
 
@@ -228,10 +228,51 @@ operations = Operations(journal, [record])
 A record naming entries the journal does not hold is refused with
 `OperationMismatch`, so a key can never be settled by a write nobody made.
 
+## Invariants
+
+Three things hold whatever order the calls arrive in. Each is checked where it
+can be broken rather than where a caller remembered to look, each refuses the
+write instead of recording it, and each refusal says which promise it kept:
+
+| Refusal | What it protects |
+| --- | --- |
+| `UnbalancedEntry` | every movement carries both of its sides, so no write creates or destroys money |
+| `InsufficientFunds` | available balances stay at or above zero, so the same funds are never spent twice |
+| `ClosedAccount` | a closed account is final, so its balance cannot move after it is settled |
+
+All three are `InvariantViolated`, so code that only needs to know the write
+did not happen catches one thing:
+
+```python
+from ledger_core import InvariantViolated
+
+try:
+    holds.spend(payout, account=customer)
+except InvariantViolated as refused:
+    print(refused)  # ... — protects: ...
+```
+
+`Holds.spend` is the guarded write: an entry balances on its own, but only the
+holds know whether what it takes is still free. Appending it directly answers
+the first question and not the second.
+
+Closing an account is a value, not an edit — the closed account is a new one,
+and it builds no postings:
+
+```python
+settled = customer.close(at=datetime.now(timezone.utc))
+settled.is_open                             # False
+settled.debit(Money(Decimal("1.00"), "EUR"))  # ClosedAccount
+```
+
+History already written stays readable: a closed account still has a balance,
+it simply stops receiving movements.
+
 ## Development
 
 ```bash
-pip install -e .
+pip install -e ".[dev]"
+python -m pytest
 ```
 
 ## License
