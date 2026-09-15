@@ -17,6 +17,7 @@ from typing import Iterable, Iterator
 
 from .entries import Entry
 from .journal import Journal
+from .storage import Storage
 
 __all__ = [
     "Operation",
@@ -99,15 +100,17 @@ class Operation:
 class Operations:
     """The keys a journal has already been written under.
 
-    A record is a plain value: it can be stored beside the journal and handed
-    back later, so a key settled in one process stays settled in the next.
+    Records are kept in the store the journal writes to: a key settled through
+    one of these stays settled for every other standing on the same store, and
+    a record is a plain value besides, so it can be handed back to a store that
+    was built empty in another process.
     """
 
-    __slots__ = ("_journal", "_records")
+    __slots__ = ("_journal", "_storage")
 
     def __init__(self, journal: Journal, records: Iterable[Operation] = ()) -> None:
         self._journal = journal
-        self._records: dict[str, Operation] = {}
+        self._storage: Storage = journal.storage
         for record in records:
             self.restore(record)
 
@@ -132,7 +135,7 @@ class Operations:
         if not batch:
             raise ValueError("an operation writes at least one entry")
         mark = fingerprint_of(batch)
-        known = self._records.get(key)
+        known = self._storage.operation(key)
         if known is not None:
             if known.fingerprint != mark:
                 raise OperationMismatch(
@@ -141,7 +144,7 @@ class Operations:
                 )
             return self.entries(key)
         written = self._journal.extend(batch)
-        self._records[key] = Operation.of(key, written)
+        self._storage.put_operation(Operation.of(key, written))
         return written
 
     def entries(self, key: str) -> tuple[Entry, ...]:
@@ -150,14 +153,14 @@ class Operations:
         return tuple(self._journal.entry(entry_id) for entry_id in record.entry_ids)
 
     def operation(self, key: str) -> Operation:
-        try:
-            return self._records[key]
-        except KeyError:
-            raise UnknownOperation(key) from None
+        found = self._storage.operation(key)
+        if found is None:
+            raise UnknownOperation(key)
+        return found
 
     def operations(self) -> tuple[Operation, ...]:
         """Every key settled so far, ready to be stored and handed back."""
-        return tuple(self._records[key] for key in sorted(self._records))
+        return self._storage.operations()
 
     def restore(self, record: Operation) -> Operation:
         """Take back a record written earlier, here or in another process.
@@ -172,9 +175,9 @@ class Operations:
                 f"operation {record.key} claims entries the journal does not hold: "
                 f"{', '.join(missing)}"
             )
-        known = self._records.get(record.key)
+        known = self._storage.operation(record.key)
         if known is None:
-            self._records[record.key] = record
+            self._storage.put_operation(record)
             return record
         if known.fingerprint != record.fingerprint:
             raise OperationMismatch(
@@ -184,10 +187,10 @@ class Operations:
         return known
 
     def __len__(self) -> int:
-        return len(self._records)
+        return len(self._storage.operations())
 
     def __iter__(self) -> Iterator[Operation]:
-        return iter(self.operations())
+        return iter(self._storage.operations())
 
     def __contains__(self, key: object) -> bool:
-        return key in self._records
+        return isinstance(key, str) and self._storage.operation(key) is not None

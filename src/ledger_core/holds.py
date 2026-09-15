@@ -20,6 +20,7 @@ from .entries import Entry
 from .invariants import ClosedAccount, InsufficientFunds
 from .journal import Journal
 from .protocol import CurrencyMismatch, MoneyLike
+from .storage import Storage
 
 __all__ = [
     "CaptureMismatch",
@@ -132,19 +133,22 @@ class Hold:
 class Holds:
     """The reservations standing against a journal.
 
+    Reservations are kept in the store the journal writes to, so holds placed
+    through one projection stand in front of every balance read from another.
+
     Amounts come back as :class:`~decimal.Decimal` in the account's own
     currency: the ledger owns no money type, so it cannot mint the zero an
     empty balance would need.
     """
 
-    __slots__ = ("_journal", "_balances", "_holds")
+    __slots__ = ("_journal", "_balances", "_storage")
 
     def __init__(self, journal: Journal, *, balances: Balances | None = None) -> None:
         if balances is not None and balances.journal is not journal:
             raise ValueError("balances must project the journal the holds stand against")
         self._journal = journal
         self._balances = balances if balances is not None else Balances(journal)
-        self._holds: dict[str, Hold] = {}
+        self._storage: Storage = journal.storage
 
     @property
     def journal(self) -> Journal:
@@ -161,7 +165,7 @@ class Holds:
     def held(self, account: Account) -> Decimal:
         """What open holds have reserved and nothing else may spend."""
         total = Decimal(0)
-        for hold in self._holds.values():
+        for hold in self._storage.holds():
             if not hold.is_open or hold.account_id != account.account_id:
                 continue
             if hold.currency != account.currency:
@@ -187,7 +191,7 @@ class Holds:
         metadata: Mapping[str, str] | None = None,
     ) -> Hold:
         """Reserve funds. Refused if they are not there to reserve."""
-        if hold_id in self._holds:
+        if self._storage.hold(hold_id) is not None:
             raise DuplicateHold(f"hold {hold_id} is already placed")
         hold = Hold(
             hold_id=hold_id,
@@ -203,7 +207,7 @@ class Holds:
                 f"hold {hold_id} reserves {amount}, "
                 f"{available} {account.currency} is available on {account.account_id}"
             )
-        self._holds[hold_id] = hold
+        self._storage.put_hold(hold)
         return hold
 
     def spend(self, entry: Entry, *, account: Account) -> Entry:
@@ -225,7 +229,7 @@ class Holds:
     def release(self, hold_id: str, *, at: datetime) -> Hold:
         """Give the reservation back; nothing is written."""
         released = self.hold(hold_id).released(at=at)
-        self._holds[hold_id] = released
+        self._storage.put_hold(released)
         return released
 
     def capture(self, hold_id: str, entry: Entry) -> Hold:
@@ -246,27 +250,27 @@ class Holds:
             )
         self._journal.append(entry)
         settled = hold.captured(at=entry.occurred_at, entry_id=entry.entry_id)
-        self._holds[hold_id] = settled
+        self._storage.put_hold(settled)
         return settled
 
     def hold(self, hold_id: str) -> Hold:
-        try:
-            return self._holds[hold_id]
-        except KeyError:
-            raise UnknownHold(hold_id) from None
+        found = self._storage.hold(hold_id)
+        if found is None:
+            raise UnknownHold(hold_id)
+        return found
 
     def open_on(self, account: Account) -> tuple[Hold, ...]:
         return tuple(
             hold
-            for hold in self._holds.values()
+            for hold in self._storage.holds()
             if hold.is_open and hold.account_id == account.account_id
         )
 
     def __len__(self) -> int:
-        return len(self._holds)
+        return len(self._storage.holds())
 
     def __iter__(self) -> Iterator[Hold]:
-        return iter(tuple(self._holds.values()))
+        return iter(self._storage.holds())
 
     def __contains__(self, hold_id: object) -> bool:
-        return hold_id in self._holds
+        return isinstance(hold_id, str) and self._storage.hold(hold_id) is not None

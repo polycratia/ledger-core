@@ -18,6 +18,7 @@ from .entries import Entry
 from .journal import Journal
 from .postings import Side
 from .protocol import CurrencyMismatch, validate_currency
+from .storage import Storage
 
 __all__ = ["Balances", "Snapshot", "SnapshotMismatch", "effect_on"]
 
@@ -74,16 +75,19 @@ class Snapshot:
 class Balances:
     """The balance projection of a journal.
 
+    Snapshots are kept in the store the journal writes to, so two projections
+    over one journal fold it once between them rather than once each.
+
     Amounts come back as :class:`~decimal.Decimal` in the account's own
     currency: the ledger owns no money type, so it cannot mint the zero an
     empty balance would need.
     """
 
-    __slots__ = ("_journal", "_snapshots")
+    __slots__ = ("_journal", "_storage")
 
     def __init__(self, journal: Journal, snapshots: Iterable[Snapshot] = ()) -> None:
         self._journal = journal
-        self._snapshots: dict[str, Snapshot] = {}
+        self._storage: Storage = journal.storage
         for snapshot in snapshots:
             self.restore(snapshot)
 
@@ -111,12 +115,12 @@ class Balances:
             through=base.through + len(pending),
             as_of=as_of,
         )
-        self._snapshots[account.account_id] = fresh
+        self._storage.put_snapshot(fresh)
         return fresh
 
     def snapshots(self) -> tuple[Snapshot, ...]:
         """Everything folded so far, ready to be stored and handed back."""
-        return tuple(self._snapshots[key] for key in sorted(self._snapshots))
+        return self._storage.snapshots()
 
     def restore(self, snapshot: Snapshot) -> Snapshot:
         """Resume from a snapshot folded earlier, here or in another process.
@@ -129,9 +133,9 @@ class Balances:
                 f"snapshot of {snapshot.account_id} counts {snapshot.through} entries, "
                 f"the journal holds {len(self._journal)}"
             )
-        known = self._snapshots.get(snapshot.account_id)
+        known = self._storage.snapshot(snapshot.account_id)
         if known is None:
-            self._snapshots[snapshot.account_id] = snapshot
+            self._storage.put_snapshot(snapshot)
             return snapshot
         if known.currency != snapshot.currency:
             raise CurrencyMismatch(
@@ -140,7 +144,7 @@ class Balances:
             )
         if known.through >= snapshot.through:
             return known
-        self._snapshots[snapshot.account_id] = snapshot
+        self._storage.put_snapshot(snapshot)
         return snapshot
 
     def at(self, account: Account, when: datetime) -> Decimal:
@@ -156,7 +160,7 @@ class Balances:
         return total
 
     def _base_for(self, account: Account) -> Snapshot:
-        known = self._snapshots.get(account.account_id)
+        known = self._storage.snapshot(account.account_id)
         if known is None:
             return Snapshot.empty(account)
         if known.currency != account.currency:
@@ -172,7 +176,7 @@ class Balances:
         return known
 
     def __len__(self) -> int:
-        return len(self._snapshots)
+        return len(self._storage.snapshots())
 
     def __contains__(self, account_id: object) -> bool:
-        return account_id in self._snapshots
+        return isinstance(account_id, str) and self._storage.snapshot(account_id) is not None

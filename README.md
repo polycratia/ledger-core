@@ -6,7 +6,8 @@ two-phase reserve, and balances that cannot drift.
 ## Status
 
 Pre-alpha. Accounts, postings, entries, the journal, balances, holds,
-idempotent operations and the invariants behind them are in place.
+idempotent operations, the storage protocol they keep their records in and the
+invariants behind them are in place.
 
 ## Installation
 
@@ -227,6 +228,39 @@ operations = Operations(journal, [record])
 
 A record naming entries the journal does not hold is refused with
 `OperationMismatch`, so a key can never be settled by a write nobody made.
+
+## Storage
+
+Nothing above keeps records of its own. Entries, snapshots, holds and settled
+keys all go through one narrow contract — `Storage` — and a journal handed none
+builds an `InMemoryStorage` for itself:
+
+```python
+from ledger_core import InMemoryStorage, Journal
+
+storage = InMemoryStorage()
+journal = Journal(storage=storage)
+```
+
+The projections write through the store their journal stands on, so a
+`Balances`, a `Holds` and an `Operations` over one journal share what each of
+them learned — including the ones built afterwards:
+
+```python
+holds = Holds(journal)
+holds.place(
+    hold_id="h-9",
+    account=customer,
+    amount=Money(Decimal("5.00"), "EUR"),
+    placed_at=datetime.now(timezone.utc),
+)
+
+Holds(journal).held(customer)  # Decimal("5.00") — the same reservation
+```
+
+`InMemoryStorage` is the reference the protocol is read against, and the double
+the tests run on. A backend that keeps rows in a database conforms by answering
+the same questions the same way; nothing above it changes.
 
 ## Invariants
 

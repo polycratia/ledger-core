@@ -23,6 +23,7 @@ from .journal import DuplicateEntry, Journal, UnknownEntry
 from .operations import Operation, OperationMismatch, Operations, UnknownOperation
 from .postings import Posting, Side
 from .protocol import CurrencyMismatch, MoneyLike
+from .storage import InMemoryStorage, Storage
 
 __version__ = "0.1.0"
 
@@ -41,6 +42,7 @@ __all__ = [
     "HoldNotOpen",
     "HoldState",
     "Holds",
+    "InMemoryStorage",
     "InsufficientFunds",
     "InvariantViolated",
     "Journal",
@@ -53,6 +55,7 @@ __all__ = [
     "Side",
     "Snapshot",
     "SnapshotMismatch",
+    "Storage",
     "UnbalancedEntry",
     "UnknownEntry",
     "UnknownHold",
