@@ -15,6 +15,75 @@ invariants behind them are in place.
 pip install ledger-core
 ```
 
+## The rules
+
+Three ideas carry everything below: why a movement is written twice, what a
+hold stands in front of, and what stays true when calls overlap.
+
+### Why double entry
+
+Money is not created by a balance going up. It moves, and a movement has a
+side it left and a side it arrived at. A ledger that keeps one number per
+account records only the result, so a number that drifted looks exactly like a
+number that is right, and nothing else in the data disagrees with it.
+
+Double entry records the movement instead. The unit of writing is the entry:
+the postings it is made of, summing to zero in every currency they touch. That
+sum is checked when the entry is built, so a one-sided movement never becomes
+an object, and never reaches the journal to be discovered later.
+
+A balance follows from the entries rather than being kept beside them — it is
+what an account's postings add up to, counted in the direction the account
+normally moves. Nothing edits it, so nothing can edit it wrongly. A mistake is
+fixed the way a paper ledger fixes one: by writing the entry that cancels the
+first, which leaves both of them readable afterwards.
+
+### What a hold is
+
+A withdrawal is not one moment but two. The funds stop being spendable when
+the customer asks for them; they leave when the payout confirms — hours later,
+or never. Treating those as one moment either lets the same funds be spent
+twice in between, or takes them away before they are gone.
+
+A hold covers the gap. It reserves an amount against an account and writes
+nothing at all: the balance does not move, and what changes is what may be
+spent. Available is the balance less every open hold, and a reservation that
+does not fit in it is refused rather than granted.
+
+The second phase settles the hold, once. A release gives the reservation back
+— the withdrawal fell through, and the ledger says nothing happened, because
+nothing did. A capture settles it against the entry that moves the money, and
+that entry has to take exactly what was held. Either way the hold closes for
+good, so a redelivered instruction cannot spend one reservation twice.
+
+### What holds when calls overlap
+
+Reading a balance writes nothing, and that is the whole of the first
+guarantee. The way a stored balance loses a movement is two writers reading
+the same number, each adding their own amount, each writing back a total the
+other never saw. There is no number here to write back.
+
+The journal is append-only and nothing already in it is rewritten, so a
+position in it keeps meaning what it meant: everything before it is accounted
+for, everything from it is not. A snapshot is exactly that — how far a fold
+got, and what it had by then. It is only ever replaced by one that reaches
+further, and one claiming more entries than the journal holds is refused. A
+stale snapshot therefore costs the replay of what it is missing, never a wrong
+answer, and losing every snapshot costs time and nothing else.
+
+Retries are carried by the key a write was asked for under, not by the entry:
+the first attempt writes, every attempt after it returns what the first one
+wrote, and the same key coming back with different work is refused instead of
+posted.
+
+What the ledger does not do is take a lock. Asking whether funds are free and
+writing the movement are two steps, and nothing between them holds off another
+writer asking the same question. Where more than one writer posts to one
+account, the store underneath has to make that pair a single step — a
+transaction, in a backend that keeps rows in a database. The rules above hold
+whatever order the calls arrive in; keeping two of them out of the same
+account at the same instant belongs to the store.
+
 ## Money
 
 The ledger does not own a money type. It posts any value that exposes an exact
