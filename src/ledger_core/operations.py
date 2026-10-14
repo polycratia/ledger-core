@@ -128,6 +128,9 @@ class Operations:
         A key already settled writes nothing and answers with the entries it
         wrote the first time. Applying it to different work is refused: the key
         says which write this is, so two writes cannot share one.
+
+        Reading the key and writing the batch under it are one step of the
+        store, so a record that cannot be kept leaves no entry behind either.
         """
         if not key:
             raise ValueError("operation key must not be empty")
@@ -135,17 +138,18 @@ class Operations:
         if not batch:
             raise ValueError("an operation writes at least one entry")
         mark = fingerprint_of(batch)
-        known = self._storage.operation(key)
-        if known is not None:
-            if known.fingerprint != mark:
-                raise OperationMismatch(
-                    f"operation {key} already wrote {', '.join(known.entry_ids)}; "
-                    f"the same key cannot carry different entries"
-                )
-            return self.entries(key)
-        written = self._journal.extend(batch)
-        self._storage.put_operation(Operation.of(key, written))
-        return written
+        with self._storage.atomic():
+            known = self._storage.operation(key)
+            if known is not None:
+                if known.fingerprint != mark:
+                    raise OperationMismatch(
+                        f"operation {key} already wrote {', '.join(known.entry_ids)}; "
+                        f"the same key cannot carry different entries"
+                    )
+                return self.entries(key)
+            written = self._journal.extend(batch)
+            self._storage.put_operation(Operation.of(key, written))
+            return written
 
     def entries(self, key: str) -> tuple[Entry, ...]:
         """What was written under a key, read back from the journal."""

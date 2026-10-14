@@ -6,8 +6,9 @@ two-phase reserve, and balances that cannot drift.
 ## Status
 
 Pre-alpha. Accounts, postings, entries, the journal, balances, holds,
-idempotent operations, the storage protocol they keep their records in and the
-invariants behind them are in place.
+idempotent operations, the storage protocol they keep their records in — with
+guarded writes landing as one step — and the invariants behind them are in
+place.
 
 ## Installation
 
@@ -76,13 +77,13 @@ the first attempt writes, every attempt after it returns what the first one
 wrote, and the same key coming back with different work is refused instead of
 posted.
 
-What the ledger does not do is take a lock. Asking whether funds are free and
-writing the movement are two steps, and nothing between them holds off another
-writer asking the same question. Where more than one writer posts to one
-account, the store underneath has to make that pair a single step — a
-transaction, in a backend that keeps rows in a database. The rules above hold
-whatever order the calls arrive in; keeping two of them out of the same
-account at the same instant belongs to the store.
+A guarded write is two steps: asking whether the funds are free, whether the
+key is already settled, whether the hold is still open — and then writing.
+Both run under one block the store opens, `Storage.atomic`, so they land
+together or not at all: a store that refuses the hold leaves no entry behind.
+How wide that promise is belongs to the store. The in-memory one puts its
+records back and lets one writer through a block at a time; a backend that
+keeps rows in a database makes it the transaction it already has.
 
 ## Money
 
@@ -330,6 +331,23 @@ Holds(journal).held(customer)  # Decimal("5.00") — the same reservation
 `InMemoryStorage` is the reference the protocol is read against, and the double
 the tests run on. A backend that keeps rows in a database conforms by answering
 the same questions the same way; nothing above it changes.
+
+### Writes that land together
+
+A check and the write it guards have to be one step, or a refusal in the
+second leaves the first behind. `Storage.atomic` is that step:
+
+```python
+with storage.atomic():
+    journal.append(deposit)
+    journal.append(refund)
+```
+
+Leaving the block by an exception undoes everything written inside it, and a
+block opened inside another joins it rather than settling on its own.
+`Holds.place`, `Holds.spend`, `Holds.capture` and `Operations.post_many`
+already run their check and their write inside one, so a store that refuses
+the hold or the operation record keeps no entry from the attempt.
 
 ## Invariants
 

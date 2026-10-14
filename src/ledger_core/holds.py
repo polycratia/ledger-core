@@ -136,6 +136,10 @@ class Holds:
     Reservations are kept in the store the journal writes to, so holds placed
     through one projection stand in front of every balance read from another.
 
+    Placing, spending and capturing ask their question and write their answer
+    under one block of that store, so a store that refuses the second step
+    keeps nothing from the first.
+
     Amounts come back as :class:`~decimal.Decimal` in the account's own
     currency: the ledger owns no money type, so it cannot mint the zero an
     empty balance would need.
@@ -191,24 +195,25 @@ class Holds:
         metadata: Mapping[str, str] | None = None,
     ) -> Hold:
         """Reserve funds. Refused if they are not there to reserve."""
-        if self._storage.hold(hold_id) is not None:
-            raise DuplicateHold(f"hold {hold_id} is already placed")
-        hold = Hold(
-            hold_id=hold_id,
-            account=account,
-            amount=amount,
-            placed_at=placed_at,
-            memo=memo,
-            metadata=metadata or {},
-        )
-        available = self.available(account)
-        if hold.amount.amount > available:
-            raise InsufficientFunds(
-                f"hold {hold_id} reserves {amount}, "
-                f"{available} {account.currency} is available on {account.account_id}"
+        with self._storage.atomic():
+            if self._storage.hold(hold_id) is not None:
+                raise DuplicateHold(f"hold {hold_id} is already placed")
+            hold = Hold(
+                hold_id=hold_id,
+                account=account,
+                amount=amount,
+                placed_at=placed_at,
+                memo=memo,
+                metadata=metadata or {},
             )
-        self._storage.put_hold(hold)
-        return hold
+            available = self.available(account)
+            if hold.amount.amount > available:
+                raise InsufficientFunds(
+                    f"hold {hold_id} reserves {amount}, "
+                    f"{available} {account.currency} is available on {account.account_id}"
+                )
+            self._storage.put_hold(hold)
+            return hold
 
     def spend(self, entry: Entry, *, account: Account) -> Entry:
         """Write a movement out of an account, refused if the funds are not free.
@@ -217,20 +222,22 @@ class Holds:
         whether what it takes is still there once open holds are counted. This
         asks that question first and appends only if the answer holds.
         """
-        taken = -effect_on(entry, account)
-        available = self.available(account)
-        if taken > available:
-            raise InsufficientFunds(
-                f"entry {entry.entry_id} takes {taken} {account.currency} from "
-                f"{account.account_id}, {available} {account.currency} is available"
-            )
-        return self._journal.append(entry)
+        with self._storage.atomic():
+            taken = -effect_on(entry, account)
+            available = self.available(account)
+            if taken > available:
+                raise InsufficientFunds(
+                    f"entry {entry.entry_id} takes {taken} {account.currency} from "
+                    f"{account.account_id}, {available} {account.currency} is available"
+                )
+            return self._journal.append(entry)
 
     def release(self, hold_id: str, *, at: datetime) -> Hold:
         """Give the reservation back; nothing is written."""
-        released = self.hold(hold_id).released(at=at)
-        self._storage.put_hold(released)
-        return released
+        with self._storage.atomic():
+            released = self.hold(hold_id).released(at=at)
+            self._storage.put_hold(released)
+            return released
 
     def capture(self, hold_id: str, entry: Entry) -> Hold:
         """Settle a hold with the movement it was reserved for.
@@ -239,19 +246,20 @@ class Holds:
         written to the journal and the hold closes against it; if either step is
         refused, neither happens.
         """
-        hold = self.hold(hold_id)
-        if not hold.is_open:
-            raise HoldNotOpen(f"hold {hold_id} is already {hold.state.value}")
-        taken = -effect_on(entry, hold.account)
-        if taken != hold.amount.amount:
-            raise CaptureMismatch(
-                f"hold {hold_id} reserved {hold.amount}, "
-                f"entry {entry.entry_id} takes {taken} {hold.currency}"
-            )
-        self._journal.append(entry)
-        settled = hold.captured(at=entry.occurred_at, entry_id=entry.entry_id)
-        self._storage.put_hold(settled)
-        return settled
+        with self._storage.atomic():
+            hold = self.hold(hold_id)
+            if not hold.is_open:
+                raise HoldNotOpen(f"hold {hold_id} is already {hold.state.value}")
+            taken = -effect_on(entry, hold.account)
+            if taken != hold.amount.amount:
+                raise CaptureMismatch(
+                    f"hold {hold_id} reserved {hold.amount}, "
+                    f"entry {entry.entry_id} takes {taken} {hold.currency}"
+                )
+            self._journal.append(entry)
+            settled = hold.captured(at=entry.occurred_at, entry_id=entry.entry_id)
+            self._storage.put_hold(settled)
+            return settled
 
     def hold(self, hold_id: str) -> Hold:
         found = self._storage.hold(hold_id)
