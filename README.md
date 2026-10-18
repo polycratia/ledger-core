@@ -177,6 +177,7 @@ snapshot = balances.snapshot(customer)
 snapshot.total    # what the account held
 snapshot.through  # how many entries are folded into it
 snapshot.as_of    # when the last of them occurred
+snapshot.side     # the direction it was counted in
 ```
 
 Snapshots are plain values, so they can be stored and handed back later:
@@ -187,8 +188,10 @@ balances = Balances(journal, [snapshot])
 
 A snapshot is only ever replaced by one that reaches further, never edited,
 and one claiming more entries than the journal holds is refused with
-`SnapshotMismatch`. A stale snapshot therefore costs a replay, never a wrong
-answer.
+`SnapshotMismatch`. So is one folded in the other direction: the same account
+id read as an asset and then as a liability would otherwise resume from a base
+whose sign has flipped. A stale snapshot therefore costs a replay, never a
+wrong answer.
 
 A balance as of a moment ignores snapshots — a position in the journal says
 nothing about a point in time — and replays in full:

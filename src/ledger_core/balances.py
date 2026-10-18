@@ -2,8 +2,9 @@
 
 A balance is not a column the ledger edits. It is a fold over the journal, so
 reading one writes nothing and two readers cannot race each other into losing
-a movement. A snapshot records only how far a fold already got: keeping a
-stale one costs the replay of the entries it is missing, never a wrong answer.
+a movement. A snapshot records how far a fold already got and in which
+direction it counted: keeping a stale one costs the replay of the entries it is
+missing, never a wrong answer.
 """
 
 from __future__ import annotations
@@ -42,10 +43,16 @@ def effect_on(entry: Entry, account: Account) -> Decimal:
 
 @dataclass(frozen=True, slots=True)
 class Snapshot:
-    """A balance together with the stretch of journal it was folded from."""
+    """A balance together with the stretch of journal it was folded from.
+
+    The direction is part of the record: the same postings counted the other way
+    round are a different number, so a fold is only ever resumed by one that
+    counted the same side.
+    """
 
     account_id: str
     currency: str
+    side: Side
     total: Decimal
     through: int = 0
     as_of: datetime | None = None
@@ -59,15 +66,22 @@ class Snapshot:
             raise ValueError("through must not be negative")
         object.__setattr__(self, "total", Decimal(self.total))
         object.__setattr__(self, "currency", validate_currency(self.currency))
+        # a snapshot read back from a store arrives as whatever it was written as
+        object.__setattr__(self, "side", Side(self.side))
 
     @classmethod
     def empty(cls, account: Account) -> Snapshot:
         """Where an account stands before a single entry is counted."""
-        return cls(account.account_id, account.currency, Decimal(0))
+        return cls(
+            account_id=account.account_id,
+            currency=account.currency,
+            side=account.normal_side,
+            total=Decimal(0),
+        )
 
     def __str__(self) -> str:
         return (
-            f"{self.account_id}: {self.total} {self.currency} "
+            f"{self.account_id}: {self.total} {self.currency} {self.side.value} "
             f"through {self.through} entries"
         )
 
@@ -111,6 +125,7 @@ class Balances:
         fresh = Snapshot(
             account_id=account.account_id,
             currency=account.currency,
+            side=account.normal_side,
             total=total,
             through=base.through + len(pending),
             as_of=as_of,
@@ -142,6 +157,11 @@ class Balances:
                 f"account {snapshot.account_id} is folded in {known.currency}, "
                 f"snapshot carries {snapshot.currency}"
             )
+        if known.side is not snapshot.side:
+            raise SnapshotMismatch(
+                f"account {snapshot.account_id} is folded on the {known.side.value} "
+                f"side, snapshot counts the {snapshot.side.value} side"
+            )
         if known.through >= snapshot.through:
             return known
         self._storage.put_snapshot(snapshot)
@@ -167,6 +187,12 @@ class Balances:
             raise CurrencyMismatch(
                 f"account {account.account_id} holds {account.currency}, "
                 f"its snapshot is folded in {known.currency}"
+            )
+        if known.side is not account.normal_side:
+            raise SnapshotMismatch(
+                f"account {account.account_id} normally moves on the "
+                f"{account.normal_side.value} side, its snapshot is folded on the "
+                f"{known.side.value} side"
             )
         if known.through > len(self._journal):
             raise SnapshotMismatch(
