@@ -27,6 +27,7 @@ from ledger_core import (
 
 NOW = datetime(2026, 1, 1, tzinfo=timezone.utc)
 LATER = NOW + timedelta(hours=1)
+MUCH_LATER = NOW + timedelta(days=1)
 
 
 def eur(amount: str) -> Money:
@@ -259,3 +260,185 @@ def test_holds_share_the_projection_they_are_handed(funded: Journal) -> None:
     assert holds.balances is balances
     with pytest.raises(ValueError):
         Holds(Journal(), balances=balances)
+
+
+def test_a_hold_may_carry_an_expiry(holds: Holds, customer: Account) -> None:
+    placed = holds.place(
+        hold_id="h-1",
+        account=customer,
+        amount=eur("30.00"),
+        placed_at=NOW,
+        expires_at=LATER,
+    )
+    assert placed.expires_at == LATER
+    assert placed.lapses_by(LATER)
+    assert placed.lapses_by(MUCH_LATER)
+    assert not placed.lapses_by(NOW)
+
+
+@pytest.mark.parametrize("expires_at", [NOW, NOW - timedelta(hours=1)])
+def test_an_expiry_comes_after_the_hold_was_placed(
+    holds: Holds, customer: Account, expires_at: datetime
+) -> None:
+    with pytest.raises(ValueError):
+        holds.place(
+            hold_id="h-1",
+            account=customer,
+            amount=eur("30.00"),
+            placed_at=NOW,
+            expires_at=expires_at,
+        )
+    assert "h-1" not in holds
+
+
+def test_a_hold_without_an_expiry_never_lapses(
+    holds: Holds, customer: Account
+) -> None:
+    placed = holds.place(
+        hold_id="h-1", account=customer, amount=eur("30.00"), placed_at=NOW
+    )
+    assert placed.expires_at is None
+    assert not placed.lapses_by(MUCH_LATER)
+    assert holds.expire(at=MUCH_LATER) == ()
+    assert holds.held(customer) == Decimal("30.00")
+
+
+def test_nothing_lapses_until_a_sweep_is_asked_for(
+    funded: Journal, holds: Holds, customer: Account
+) -> None:
+    holds.place(
+        hold_id="h-1",
+        account=customer,
+        amount=eur("30.00"),
+        placed_at=NOW,
+        expires_at=LATER,
+    )
+    assert holds.hold("h-1").is_open
+    assert holds.held(customer) == Decimal("30.00")
+    assert holds.available(customer) == Decimal("70.00")
+
+    swept = holds.expire(at=MUCH_LATER)
+    assert [hold.hold_id for hold in swept] == ["h-1"]
+    assert holds.held(customer) == Decimal("0")
+    assert holds.available(customer) == Decimal("100.00")
+    assert len(funded) == 1
+
+
+def test_a_sweep_closes_what_lapsed_as_expired(
+    holds: Holds, customer: Account
+) -> None:
+    holds.place(
+        hold_id="h-1",
+        account=customer,
+        amount=eur("30.00"),
+        placed_at=NOW,
+        expires_at=LATER,
+    )
+    (swept,) = holds.expire(at=MUCH_LATER)
+    assert swept.state is HoldState.EXPIRED
+    assert swept.state.is_settled
+    assert swept.settled_at == MUCH_LATER
+    assert swept.settled_by is None
+    assert swept.expires_at == LATER
+    assert holds.hold("h-1").state is HoldState.EXPIRED
+    assert holds.open_on(customer) == ()
+
+
+def test_an_expiry_at_the_sweep_lapses(holds: Holds, customer: Account) -> None:
+    holds.place(
+        hold_id="h-1",
+        account=customer,
+        amount=eur("30.00"),
+        placed_at=NOW,
+        expires_at=LATER,
+    )
+    assert [hold.hold_id for hold in holds.expire(at=LATER)] == ["h-1"]
+
+
+def test_a_hold_outliving_the_sweep_stays_open(
+    holds: Holds, customer: Account
+) -> None:
+    holds.place(
+        hold_id="h-1",
+        account=customer,
+        amount=eur("30.00"),
+        placed_at=NOW,
+        expires_at=MUCH_LATER,
+    )
+    assert holds.expire(at=LATER) == ()
+    assert holds.hold("h-1").is_open
+    assert holds.held(customer) == Decimal("30.00")
+
+
+def test_a_sweep_closes_only_what_lapsed(holds: Holds, customer: Account) -> None:
+    holds.place(
+        hold_id="h-1",
+        account=customer,
+        amount=eur("10.00"),
+        placed_at=NOW,
+        expires_at=LATER,
+    )
+    holds.place(
+        hold_id="h-2",
+        account=customer,
+        amount=eur("20.00"),
+        placed_at=NOW,
+        expires_at=MUCH_LATER,
+    )
+    holds.place(hold_id="h-3", account=customer, amount=eur("30.00"), placed_at=NOW)
+
+    assert [hold.hold_id for hold in holds.expire(at=LATER)] == ["h-1"]
+    assert holds.held(customer) == Decimal("50.00")
+    assert {hold.hold_id for hold in holds.open_on(customer)} == {"h-2", "h-3"}
+
+
+def test_a_capture_before_the_sweep_still_settles(
+    funded: Journal, holds: Holds, cash: Account, customer: Account
+) -> None:
+    holds.place(
+        hold_id="h-1",
+        account=customer,
+        amount=eur("30.00"),
+        placed_at=NOW,
+        expires_at=LATER,
+    )
+    settled = holds.capture("h-1", payout(cash, customer, "30.00"))
+    assert settled.state is HoldState.CAPTURED
+    assert holds.expire(at=MUCH_LATER) == ()
+    assert holds.hold("h-1").state is HoldState.CAPTURED
+    assert "e-2" in funded
+    assert holds.balance(customer) == Decimal("70.00")
+
+
+def test_a_capture_after_the_sweep_is_refused(
+    funded: Journal, holds: Holds, cash: Account, customer: Account
+) -> None:
+    holds.place(
+        hold_id="h-1",
+        account=customer,
+        amount=eur("30.00"),
+        placed_at=NOW,
+        expires_at=LATER,
+    )
+    holds.expire(at=MUCH_LATER)
+    with pytest.raises(HoldNotOpen):
+        holds.capture("h-1", payout(cash, customer, "30.00"))
+    assert "e-2" not in funded
+    assert len(funded) == 1
+    assert holds.balance(customer) == Decimal("100.00")
+
+
+def test_an_expired_hold_never_reopens(holds: Holds, customer: Account) -> None:
+    holds.place(
+        hold_id="h-1",
+        account=customer,
+        amount=eur("30.00"),
+        placed_at=NOW,
+        expires_at=LATER,
+    )
+    holds.expire(at=MUCH_LATER)
+    with pytest.raises(HoldNotOpen):
+        holds.release("h-1", at=MUCH_LATER)
+    assert holds.expire(at=MUCH_LATER) == ()
+    assert holds.hold("h-1").settled_at == MUCH_LATER
+    assert len(holds) == 1

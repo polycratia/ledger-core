@@ -4,6 +4,9 @@ A hold moves nothing. It stands between a balance and what may be spent from
 it: available is the balance less everything still reserved, and a reservation
 that does not fit is refused. The movement itself appears only on capture, as
 an ordinary entry in the journal.
+
+An expiry is a fact a hold carries, not a clock the ledger reads: a reservation
+whose moment has passed keeps standing until a sweep is asked for.
 """
 
 from __future__ import annotations
@@ -54,6 +57,7 @@ class HoldState(Enum):
     OPEN = "open"
     RELEASED = "released"
     CAPTURED = "captured"
+    EXPIRED = "expired"
 
     @property
     def is_settled(self) -> bool:
@@ -68,6 +72,7 @@ class Hold:
     account: Account
     amount: MoneyLike
     placed_at: datetime
+    expires_at: datetime | None = None
     memo: str = ""
     state: HoldState = HoldState.OPEN
     settled_at: datetime | None = None
@@ -89,6 +94,11 @@ class Hold:
                 f"account {self.account.account_id} holds {self.account.currency}, "
                 f"got {self.amount.currency}"
             )
+        if self.expires_at is not None and self.expires_at <= self.placed_at:
+            raise ValueError(
+                f"hold {self.hold_id} expires at {self.expires_at}, which is not "
+                f"after it was placed at {self.placed_at}"
+            )
         object.__setattr__(self, "metadata", dict(self.metadata))
 
     @property
@@ -103,6 +113,10 @@ class Hold:
     def is_open(self) -> bool:
         return self.state is HoldState.OPEN
 
+    def lapses_by(self, moment: datetime) -> bool:
+        """Whether its expiry has arrived by a moment it is asked about."""
+        return self.expires_at is not None and self.expires_at <= moment
+
     def released(self, *, at: datetime) -> Hold:
         """The same hold, no longer reserving anything."""
         return self._settled(HoldState.RELEASED, at, None)
@@ -110,6 +124,10 @@ class Hold:
     def captured(self, *, at: datetime, entry_id: str) -> Hold:
         """The same hold, settled by the entry that moved the funds."""
         return self._settled(HoldState.CAPTURED, at, entry_id)
+
+    def expired(self, *, at: datetime) -> Hold:
+        """The same hold, closed because its expiry had passed by a sweep."""
+        return self._settled(HoldState.EXPIRED, at, None)
 
     def _settled(self, state: HoldState, at: datetime, entry_id: str | None) -> Hold:
         if not self.is_open:
@@ -119,6 +137,7 @@ class Hold:
             account=self.account,
             amount=self.amount,
             placed_at=self.placed_at,
+            expires_at=self.expires_at,
             memo=self.memo,
             state=state,
             settled_at=at,
@@ -191,6 +210,7 @@ class Holds:
         account: Account,
         amount: MoneyLike,
         placed_at: datetime,
+        expires_at: datetime | None = None,
         memo: str = "",
         metadata: Mapping[str, str] | None = None,
     ) -> Hold:
@@ -203,6 +223,7 @@ class Holds:
                 account=account,
                 amount=amount,
                 placed_at=placed_at,
+                expires_at=expires_at,
                 memo=memo,
                 metadata=metadata or {},
             )
@@ -260,6 +281,26 @@ class Holds:
             settled = hold.captured(at=entry.occurred_at, entry_id=entry.entry_id)
             self._storage.put_hold(settled)
             return settled
+
+    def expire(self, *, at: datetime) -> tuple[Hold, ...]:
+        """Close every open hold that had lapsed by a moment, and answer with them.
+
+        The ledger reads no clock, so an expiry on its own settles nothing: a
+        reservation stands until a sweep is asked for, and a capture arriving
+        before that sweep still settles it. Afterwards the hold is closed like
+        any other, and capturing or releasing it raises
+        :class:`HoldNotOpen`. Nothing is written to the journal — an expiry
+        gives the reservation back, it does not move money.
+        """
+        with self._storage.atomic():
+            swept = tuple(
+                hold.expired(at=at)
+                for hold in self._storage.holds()
+                if hold.is_open and hold.lapses_by(at)
+            )
+            for hold in swept:
+                self._storage.put_hold(hold)
+            return swept
 
     def hold(self, hold_id: str) -> Hold:
         found = self._storage.hold(hold_id)

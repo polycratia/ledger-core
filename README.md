@@ -5,10 +5,10 @@ two-phase reserve, and balances that cannot drift.
 
 ## Status
 
-Pre-alpha. Accounts, postings, entries, the journal, balances, holds,
-idempotent operations, the storage protocol they keep their records in — with
-guarded writes landing as one step — and the invariants behind them are in
-place.
+Pre-alpha. Accounts, postings, entries, the journal, balances, holds — with an
+expiry swept on demand — idempotent operations, the storage protocol they keep
+their records in, with guarded writes landing as one step, and the invariants
+behind them are in place.
 
 ## Installation
 
@@ -56,6 +56,13 @@ The second phase settles the hold, once. A release gives the reservation back
 nothing did. A capture settles it against the entry that moves the money, and
 that entry has to take exactly what was held. Either way the hold closes for
 good, so a redelivered instruction cannot spend one reservation twice.
+
+An authorization that is never answered has to close too, or the funds stay
+reserved forever. A hold may carry the moment it stops standing, and a sweep
+closes everything that had lapsed by a moment it is given. The ledger reads no
+clock: nothing lapses on its own, so a capture arriving before the sweep still
+settles the hold, and the reservation is given back exactly when someone asked
+for it to be.
 
 ### What holds when calls overlap
 
@@ -256,6 +263,41 @@ The entry has to take exactly what was held, or `CaptureMismatch` is raised
 and nothing is written. A settled hold never reopens: releasing or capturing
 it twice raises `HoldNotOpen`.
 
+### Holds that lapse
+
+An authorization nobody ever answers would reserve the funds forever. A hold
+can carry the moment it stops standing, which has to be after it was placed:
+
+```python
+placed_at = datetime.now(timezone.utc)
+
+holds.place(
+    hold_id="h-2",
+    account=customer,
+    amount=Money(Decimal("5.00"), "EUR"),
+    placed_at=placed_at,
+    expires_at=placed_at + timedelta(days=7),
+)
+```
+
+The expiry is a fact the hold carries, not a clock the ledger reads. Nothing
+lapses on its own: a sweep closes every open hold whose expiry was at or
+before the moment it is given, and answers with the ones it closed.
+
+```python
+lapsed = holds.expire(at=datetime.now(timezone.utc))
+lapsed[0].state  # HoldState.EXPIRED
+```
+
+`EXPIRED` is settled like `RELEASED` and `CAPTURED`, so a swept hold never
+reopens and the reservation it stood for is back in `available`. Nothing is
+written to the journal — an expiry gives funds back, it does not move them.
+
+Because only the sweep lapses anything, the order of the two calls is the whole
+answer: a capture arriving before the sweep still settles the hold, and one
+arriving after it raises `HoldNotOpen`. A ledger that read its own clock would
+decide that race by how long the caller took to arrive.
+
 ## Idempotency
 
 Deposit callbacks arrive more than once. Retrying the entry is no answer: the
@@ -348,9 +390,10 @@ with storage.atomic():
 
 Leaving the block by an exception undoes everything written inside it, and a
 block opened inside another joins it rather than settling on its own.
-`Holds.place`, `Holds.spend`, `Holds.capture` and `Operations.post_many`
-already run their check and their write inside one, so a store that refuses
-the hold or the operation record keeps no entry from the attempt.
+`Holds.place`, `Holds.spend`, `Holds.capture`, `Holds.expire` and
+`Operations.post_many` already run their check and their write inside one, so a
+store that refuses the hold or the operation record keeps no entry from the
+attempt.
 
 ## Invariants
 
