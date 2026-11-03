@@ -28,6 +28,7 @@ dependencies = []
 # cryptomoney is not published yet; until it is, install it from source:
 # pip install "cryptomoney @ git+https://github.com/polycratia/cryptomoney"
 crypto = ["cryptomoney>=0.1"]
+testing = ["pytest>=7"]
 dev = ["pytest>=7"]
 
 [project.urls]

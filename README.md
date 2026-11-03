@@ -7,8 +7,8 @@ two-phase reserve, and balances that cannot drift.
 
 Pre-alpha. Accounts, postings, entries, the journal, balances, holds — with an
 expiry swept on demand — idempotent operations, the storage protocol they keep
-their records in, with guarded writes landing as one step, and the invariants
-behind them are in place.
+their records in, with guarded writes landing as one step and a conformance
+suite any backend runs, and the invariants behind them are in place.
 
 ## Installation
 
@@ -394,6 +394,40 @@ block opened inside another joins it rather than settling on its own.
 `Operations.post_many` already run their check and their write inside one, so a
 store that refuses the hold or the operation record keeps no entry from the
 attempt.
+
+### The suite a backend runs
+
+`Storage` is a contract, so it is checked rather than described twice.
+`ledger_core.testing` carries that check as a suite: subclass it, say which
+store it builds, and pytest runs the whole contract against yours.
+
+```python
+from ledger_core import Storage
+from ledger_core.testing import StorageConformance
+
+
+class TestMyStorage(StorageConformance):
+    def new_storage(self) -> Storage:
+        return MyStorage()
+```
+
+It asks only what the ledger relies on: entries come back in the order they
+were appended, a position past the end answers with nothing rather than an
+error, a snapshot, hold or operation record is replaced by the one under its
+key, an unknown key is answered with `None`, a read is a copy the store does
+not see afterwards, and a block of writes lands together or not at all.
+Records are compared by value, so a backend that rebuilds one from a row
+conforms as far as one that hands back the object it was given. A store that
+hands out the list it keeps its entries in fails the suite.
+
+The suite is written against pytest, which `pip install "ledger-core[testing]"`
+pulls in. The same checks run outside a pytest session:
+
+```python
+from ledger_core.testing import conformance_failures
+
+conformance_failures(MyStorage)  # () when the store keeps the contract
+```
 
 ## Invariants
 
